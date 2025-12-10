@@ -1,10 +1,10 @@
-# Wegbegleitung
+# Abschiedskompass
 
-Eine einfühlsame Webseite für Angehörige und Betroffene zum Thema Tod, Sterbebegleitung und Trauer.
+Orientierung und Unterstützung für Angehörige zum Thema Tod, Sterbebegleitung und Trauer.
 
 ## Über das Projekt
 
-Wegbegleitung ist eine zentrale Anlaufstelle für Menschen, die sich mit dem Verlust eines nahestehenden Menschen auseinandersetzen – sei es bevorstehend oder bereits geschehen. Die Webseite bietet:
+Der **Abschiedskompass** ist eine zentrale Anlaufstelle für Menschen, die einen nahestehenden Menschen verlieren oder verloren haben. Die Webseite unterstützt in allen Phasen – von der Diagnose einer schweren Krankheit über die Sterbebegleitung bis hin zu Bestattung und Trauerbewältigung. Sie bietet:
 
 - **Informationen** über die Sterbephase und was medizinisch passiert
 - **Psychologische Unterstützung** mit Informationen zu Trauerphasen und Gefühlen
