@@ -1,6 +1,6 @@
 /**
- * Wegbegleitung - Main JavaScript
- * Interaktivität für Fragebogen, Navigation und Chat
+ * Abschiedskompass - Main JavaScript
+ * Interaktivität für Fragebogen, Navigation und KI-Chat
  */
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -299,7 +299,7 @@ function initQuestionnaire() {
 }
 
 /**
- * Chat Widget functionality
+ * Chat Widget functionality with AI integration
  */
 function initChatWidget() {
     const chatWidget = document.getElementById('chatWidget');
@@ -310,6 +310,16 @@ function initChatWidget() {
     const chatMessages = document.getElementById('chatMessages');
 
     if (!chatWidget) return;
+
+    // Chat history for context
+    let chatHistory = [];
+
+    // Check if API is configured
+    function isApiConfigured() {
+        return typeof CHAT_CONFIG !== 'undefined' &&
+               ((CHAT_CONFIG.API_PROVIDER === 'gemini' && CHAT_CONFIG.GEMINI_API_KEY) ||
+                (CHAT_CONFIG.API_PROVIDER === 'openai' && CHAT_CONFIG.OPENAI_API_KEY));
+    }
 
     // Open chat
     if (openChatBtn) {
@@ -327,19 +337,41 @@ function initChatWidget() {
     }
 
     // Send message
-    function sendMessage() {
+    async function sendMessage() {
         const message = chatInput.value.trim();
         if (!message) return;
 
         // Add user message
         addMessage(message, 'user');
         chatInput.value = '';
+        chatInput.disabled = true;
+        sendMessageBtn.disabled = true;
 
-        // Simulate bot response (placeholder for actual AI integration)
-        setTimeout(() => {
-            const response = generateBotResponse(message);
+        // Show typing indicator
+        const typingIndicator = addTypingIndicator();
+
+        try {
+            let response;
+            if (isApiConfigured()) {
+                // Use AI API
+                response = await getAIResponse(message);
+            } else {
+                // Fallback to local responses
+                response = generateLocalResponse(message);
+            }
+
+            // Remove typing indicator and add response
+            typingIndicator.remove();
             addMessage(response, 'bot');
-        }, 1000);
+        } catch (error) {
+            console.error('Chat error:', error);
+            typingIndicator.remove();
+            addMessage('Es tut mir leid, es ist ein Fehler aufgetreten. Bei dringenden Fragen erreichen Sie die Telefonseelsorge unter 0800 111 0 111.', 'bot');
+        }
+
+        chatInput.disabled = false;
+        sendMessageBtn.disabled = false;
+        chatInput.focus();
     }
 
     if (sendMessageBtn) {
@@ -348,7 +380,8 @@ function initChatWidget() {
 
     if (chatInput) {
         chatInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
                 sendMessage();
             }
         });
@@ -358,40 +391,227 @@ function initChatWidget() {
     function addMessage(text, sender) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `chat-message ${sender}`;
-        messageDiv.innerHTML = `<p>${text}</p>`;
+
+        // Convert line breaks to <br> and sanitize
+        const sanitizedText = text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br>');
+
+        messageDiv.innerHTML = `<p>${sanitizedText}</p>`;
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        // Add to history
+        chatHistory.push({ role: sender === 'user' ? 'user' : 'assistant', content: text });
+
+        // Keep history manageable
+        if (chatHistory.length > 20) {
+            chatHistory = chatHistory.slice(-20);
+        }
     }
 
-    // Simple bot response (placeholder)
-    function generateBotResponse(message) {
+    // Add typing indicator
+    function addTypingIndicator() {
+        const indicator = document.createElement('div');
+        indicator.className = 'chat-message bot typing-indicator';
+        indicator.innerHTML = '<p><span>.</span><span>.</span><span>.</span></p>';
+        chatMessages.appendChild(indicator);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        return indicator;
+    }
+
+    // Get AI response from API
+    async function getAIResponse(message) {
+        if (CHAT_CONFIG.API_PROVIDER === 'gemini') {
+            return await callGeminiAPI(message);
+        } else if (CHAT_CONFIG.API_PROVIDER === 'openai') {
+            return await callOpenAIAPI(message);
+        }
+        throw new Error('No API provider configured');
+    }
+
+    // Call Google Gemini API
+    async function callGeminiAPI(message) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${CHAT_CONFIG.GEMINI_MODEL}:generateContent?key=${CHAT_CONFIG.GEMINI_API_KEY}`;
+
+        // Build conversation history for context
+        const contents = [];
+
+        // Add system instruction
+        contents.push({
+            role: 'user',
+            parts: [{ text: SYSTEM_PROMPT + '\n\nBitte antworte auf die folgende Nachricht:' }]
+        });
+        contents.push({
+            role: 'model',
+            parts: [{ text: 'Verstanden. Ich bin der einfühlsame Chat-Assistent des Abschiedskompass und werde entsprechend antworten.' }]
+        });
+
+        // Add recent chat history
+        for (const msg of chatHistory.slice(-6)) {
+            contents.push({
+                role: msg.role === 'user' ? 'user' : 'model',
+                parts: [{ text: msg.content }]
+            });
+        }
+
+        // Add current message
+        contents.push({
+            role: 'user',
+            parts: [{ text: message }]
+        });
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                contents: contents,
+                generationConfig: {
+                    temperature: CHAT_CONFIG.TEMPERATURE,
+                    maxOutputTokens: CHAT_CONFIG.MAX_TOKENS
+                },
+                safetySettings: [
+                    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+                ]
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            console.error('Gemini API error:', error);
+            throw new Error('API request failed');
+        }
+
+        const data = await response.json();
+
+        if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+            return data.candidates[0].content.parts[0].text;
+        }
+
+        throw new Error('Unexpected API response format');
+    }
+
+    // Call OpenAI API
+    async function callOpenAIAPI(message) {
+        const url = 'https://api.openai.com/v1/chat/completions';
+
+        const messages = [
+            { role: 'system', content: SYSTEM_PROMPT }
+        ];
+
+        // Add recent chat history
+        for (const msg of chatHistory.slice(-6)) {
+            messages.push({
+                role: msg.role,
+                content: msg.content
+            });
+        }
+
+        // Add current message
+        messages.push({ role: 'user', content: message });
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${CHAT_CONFIG.OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: CHAT_CONFIG.OPENAI_MODEL,
+                messages: messages,
+                temperature: CHAT_CONFIG.TEMPERATURE,
+                max_tokens: CHAT_CONFIG.MAX_TOKENS
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            console.error('OpenAI API error:', error);
+            throw new Error('API request failed');
+        }
+
+        const data = await response.json();
+
+        if (data.choices && data.choices[0] && data.choices[0].message) {
+            return data.choices[0].message.content;
+        }
+
+        throw new Error('Unexpected API response format');
+    }
+
+    // Local fallback responses (when no API is configured)
+    function generateLocalResponse(message) {
         const lowerMessage = message.toLowerCase();
 
-        // Keyword-based responses (placeholder for actual AI)
-        if (lowerMessage.includes('hilfe') || lowerMessage.includes('notfall')) {
-            return 'Wenn Sie sich in einer akuten Krise befinden, erreichen Sie die Telefonseelsorge unter 0800 111 0 111 (kostenlos, 24 Stunden). Wie kann ich Ihnen sonst weiterhelfen?';
+        // Crisis keywords - always respond with emergency number
+        if (lowerMessage.includes('suizid') || lowerMessage.includes('umbringen') ||
+            lowerMessage.includes('nicht mehr leben') || lowerMessage.includes('selbstmord')) {
+            return 'Ich höre, dass Sie in einer sehr schwierigen Situation sind. Bitte rufen Sie jetzt die Telefonseelsorge an: 0800 111 0 111 (kostenlos, 24 Stunden). Dort sind Menschen, die Ihnen zuhören und helfen können. Sie müssen das nicht alleine durchstehen.';
         }
 
-        if (lowerMessage.includes('beerdigung') || lowerMessage.includes('bestattung')) {
-            return 'Informationen zu Bestattungsarten und der Organisation einer Beerdigung finden Sie unter "Nach dem Abschied". Soll ich Ihnen weitere Informationen geben?';
+        // Help/Emergency
+        if (lowerMessage.includes('hilfe') || lowerMessage.includes('notfall') || lowerMessage.includes('krise')) {
+            return 'Wenn Sie sich in einer akuten Krise befinden, erreichen Sie die Telefonseelsorge unter 0800 111 0 111 (kostenlos, 24 Stunden). Wie kann ich Ihnen hier weiterhelfen?';
         }
 
-        if (lowerMessage.includes('trauer') || lowerMessage.includes('traurig')) {
-            return 'Trauer ist ein natürlicher und wichtiger Prozess. Jeder trauert auf seine eigene Weise und in seinem eigenen Tempo. Unter "Psychologische Begleitung" finden Sie mehr über Trauerphasen und hilfreiche Strategien.';
+        // Death just happened
+        if (lowerMessage.includes('gerade gestorben') || lowerMessage.includes('gerade verstorben') ||
+            lowerMessage.includes('ist tot') || lowerMessage.includes('ist gestorben')) {
+            return 'Es tut mir aufrichtig leid für Ihren Verlust. In den ersten Stunden ist es wichtig, einen Arzt für den Totenschein zu rufen und dann einen Bestatter zu kontaktieren. Unter "Praktische Schritte" finden Sie eine Checkliste. Die Telefonseelsorge ist unter 0800 111 0 111 erreichbar, wenn Sie jemanden zum Reden brauchen.';
         }
 
-        if (lowerMessage.includes('sterben') || lowerMessage.includes('sterbephase')) {
-            return 'Die Sterbephase kann für alle Beteiligten eine herausfordernde Zeit sein. Unter "Die Sterbephase verstehen" finden Sie Informationen darüber, was in dieser Zeit passiert und wie Sie begleiten können.';
+        // Funeral/Burial
+        if (lowerMessage.includes('beerdigung') || lowerMessage.includes('bestattung') ||
+            lowerMessage.includes('bestatten') || lowerMessage.includes('grab')) {
+            return 'Informationen zu Bestattungsarten, Trauerfeier und Grabpflege finden Sie unter "Nach dem Abschied". Ein Bestatter kann Sie durch viele dieser Schritte begleiten. Haben Sie konkrete Fragen dazu?';
         }
 
-        if (lowerMessage.includes('danke')) {
-            return 'Gern geschehen. Ich bin hier, wenn Sie weitere Fragen haben oder einfach nur reden möchten.';
+        // Grief/Sadness
+        if (lowerMessage.includes('trauer') || lowerMessage.includes('traurig') ||
+            lowerMessage.includes('vermisse') || lowerMessage.includes('schmerz')) {
+            return 'Trauer ist ein natürlicher und wichtiger Prozess – jeder trauert auf seine Weise. Unter "Psychologische Begleitung" finden Sie Informationen zu Trauerphasen und Strategien. Möchten Sie mir erzählen, was Sie gerade beschäftigt?';
+        }
+
+        // Dying process
+        if (lowerMessage.includes('sterben') || lowerMessage.includes('sterbephase') ||
+            lowerMessage.includes('letzte phase') || lowerMessage.includes('sterbend')) {
+            return 'Die Begleitung eines sterbenden Menschen ist eine der intensivsten Erfahrungen. Unter "Die Sterbephase verstehen" finden Sie Informationen darüber, was körperlich und emotional passiert, und wie Sie begleiten können.';
+        }
+
+        // Self-care
+        if (lowerMessage.includes('überfordert') || lowerMessage.includes('kann nicht mehr') ||
+            lowerMessage.includes('ausgelaugt') || lowerMessage.includes('erschöpft')) {
+            return 'Es ist wichtig, dass Sie auch auf sich selbst achten. Unter "Selbstfürsorge" finden Sie konkrete Tipps. Vergessen Sie nicht: Sie können nur für andere da sein, wenn es Ihnen selbst einigermaßen gut geht. Brauchen Sie Entlastung?';
+        }
+
+        // Practical matters
+        if (lowerMessage.includes('formular') || lowerMessage.includes('behörde') ||
+            lowerMessage.includes('dokument') || lowerMessage.includes('frist')) {
+            return 'Unter "Praktische Schritte" finden Sie Checklisten und Fristen für alle wichtigen Formalitäten. Der Bestatter kann bei vielen Behördengängen helfen. Haben Sie eine konkrete Frage?';
+        }
+
+        // Thanks
+        if (lowerMessage.includes('danke') || lowerMessage.includes('vielen dank')) {
+            return 'Gern geschehen. Ich bin hier, wenn Sie weitere Fragen haben oder einfach jemanden zum Zuhören brauchen.';
+        }
+
+        // Greeting
+        if (lowerMessage.includes('hallo') || lowerMessage.includes('hi') ||
+            lowerMessage.includes('guten tag') || lowerMessage === 'hey') {
+            return 'Guten Tag. Ich bin hier, um Ihnen zu helfen. Erzählen Sie mir, was Sie beschäftigt, oder stellen Sie mir eine Frage zu den Themen auf dieser Seite.';
         }
 
         // Default response
         const defaultResponses = [
-            'Danke für Ihre Nachricht. Ich bin hier, um Ihnen zu helfen. Können Sie mir mehr darüber erzählen, was Sie gerade beschäftigt?',
-            'Ich verstehe, dass dies eine schwierige Zeit ist. Wie kann ich Sie am besten unterstützen?',
+            'Ich bin hier, um Ihnen zu helfen. Können Sie mir mehr darüber erzählen, was Sie gerade beschäftigt?',
+            'Ich verstehe, dass dies eine schwierige Zeit ist. Womit kann ich Ihnen konkret weiterhelfen?',
             'Ihre Gedanken und Gefühle sind wichtig. Möchten Sie mir mehr erzählen, oder soll ich Ihnen Informationen zu einem bestimmten Thema geben?'
         ];
 
@@ -440,7 +660,7 @@ function initScrollEffects() {
     });
 }
 
-// Add shake animation
+// Add animations via JavaScript
 const style = document.createElement('style');
 style.textContent = `
     @keyframes shake {
@@ -458,6 +678,26 @@ style.textContent = `
     .fade-in.visible {
         opacity: 1;
         transform: translateY(0);
+    }
+
+    .typing-indicator p {
+        display: flex;
+        gap: 4px;
+    }
+
+    .typing-indicator span {
+        animation: bounce 1.4s ease-in-out infinite;
+        font-size: 1.5em;
+        line-height: 1;
+    }
+
+    .typing-indicator span:nth-child(1) { animation-delay: 0s; }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes bounce {
+        0%, 60%, 100% { transform: translateY(0); }
+        30% { transform: translateY(-4px); }
     }
 `;
 document.head.appendChild(style);
